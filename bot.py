@@ -4,9 +4,13 @@ Telegram-бот для скачивания видео с TikTok
 
 Токен бота берётся из переменной окружения BOT_TOKEN
 (настраивается в Railway -> Variables), в коде токена нет.
+
+Статистика пользователей сохраняется в users.json и доступна
+только администратору по команде /stats.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -21,6 +25,8 @@ from aiogram.types import FSInputFile
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
 MAX_FILE_SIZE_MB = 50  # лимит обычного Bot API
+USERS_FILE = "users.json"
+ADMIN_ID = 5420205036  # твой Telegram ID — только тебе доступна /stats
 
 # ==== ЛОГИРОВАНИЕ ====
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +47,30 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 TIKTOK_REGEX = re.compile(
     r"(https?://)?(www\.|vm\.|vt\.)?tiktok\.com/\S+", re.IGNORECASE
 )
+
+
+# ==== УЧЁТ ПОЛЬЗОВАТЕЛЕЙ ====
+def load_users() -> set:
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r") as f:
+                return set(json.load(f))
+        except (json.JSONDecodeError, ValueError):
+            return set()
+    return set()
+
+
+def save_users(users: set):
+    with open(USERS_FILE, "w") as f:
+        json.dump(list(users), f)
+
+
+def register_user(user_id: int):
+    users = load_users()
+    if user_id not in users:
+        users.add(user_id)
+        save_users(users)
+        logger.info(f"Новый пользователь: {user_id} (всего: {len(users)})")
 
 
 def download_tiktok(url: str) -> str:
@@ -64,6 +94,7 @@ def download_tiktok(url: str) -> str:
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
+    register_user(message.from_user.id)
     await message.answer(
         "Привет! Пришли мне ссылку на видео из TikTok, и я его скачаю "
         "и пришлю сюда файлом."
@@ -72,6 +103,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
+    register_user(message.from_user.id)
     await message.answer(
         "Просто отправь ссылку вида:\n"
         "https://www.tiktok.com/@user/video/1234567890\n\n"
@@ -79,8 +111,18 @@ async def cmd_help(message: types.Message):
     )
 
 
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return  # для всех остальных бот молчит, как будто команды нет
+    users = load_users()
+    await message.answer(f"👥 Всего уникальных пользователей: {len(users)}")
+
+
 @dp.message()
 async def handle_message(message: types.Message):
+    register_user(message.from_user.id)
+
     text = message.text or ""
     match = TIKTOK_REGEX.search(text)
 
