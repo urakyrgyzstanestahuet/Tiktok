@@ -50,25 +50,29 @@ TIKTOK_REGEX = re.compile(
 
 
 # ==== УЧЁТ ПОЛЬЗОВАТЕЛЕЙ ====
-def load_users() -> set:
+def load_users() -> dict:
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, "r") as f:
-                return set(json.load(f))
+                return json.load(f)
         except (json.JSONDecodeError, ValueError):
-            return set()
-    return set()
+            return {}
+    return {}
 
 
-def save_users(users: set):
+def save_users(users: dict):
     with open(USERS_FILE, "w") as f:
-        json.dump(list(users), f)
+        json.dump(users, f, ensure_ascii=False)
 
 
-def register_user(user_id: int):
+def register_user(user: types.User):
     users = load_users()
+    user_id = str(user.id)
     if user_id not in users:
-        users.add(user_id)
+        users[user_id] = {
+            "username": user.username,
+            "first_name": user.first_name,
+        }
         save_users(users)
         logger.info(f"Новый пользователь: {user_id} (всего: {len(users)})")
 
@@ -94,7 +98,7 @@ def download_tiktok(url: str) -> str:
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    register_user(message.from_user.id)
+    register_user(message.from_user)
     await message.answer(
         "Привет! Пришли мне ссылку на видео из TikTok, и я его скачаю "
         "и пришлю сюда файлом."
@@ -103,7 +107,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    register_user(message.from_user.id)
+    register_user(message.from_user)
     await message.answer(
         "Просто отправь ссылку вида:\n"
         "https://www.tiktok.com/@user/video/1234567890\n\n"
@@ -116,12 +120,28 @@ async def cmd_stats(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return  # для всех остальных бот молчит, как будто команды нет
     users = load_users()
-    await message.answer(f"👥 Всего уникальных пользователей: {len(users)}")
+
+    if not users:
+        await message.answer("Пока нет ни одного пользователя.")
+        return
+
+    lines = [f"👥 Всего уникальных пользователей: {len(users)}\n"]
+    for uid, info in users.items():
+        username = info.get("username")
+        first_name = info.get("first_name") or "—"
+        handle = f"@{username}" if username else "(без username)"
+        lines.append(f"• {first_name} {handle} — id {uid}")
+
+    text = "\n".join(lines)
+
+    # Telegram ограничивает сообщение 4096 символами — режем на части
+    for i in range(0, len(text), 4000):
+        await message.answer(text[i:i + 4000])
 
 
 @dp.message()
 async def handle_message(message: types.Message):
-    register_user(message.from_user.id)
+    register_user(message.from_user)
 
     text = message.text or ""
     match = TIKTOK_REGEX.search(text)
